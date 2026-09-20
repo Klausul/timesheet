@@ -33,6 +33,13 @@
 }
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+/* touch-action does not inherit, so this has to hit every element, not just body.
+   It removes the ~300ms tap delay on controls. Note iOS still allows double-tap
+   zoom on plain containers; only user-scalable=no stops that, and that would
+   disable pinch-to-zoom too, so it is left alone. */
+html,body,*{touch-action:manipulation}
+body{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+input,textarea{user-select:text;-webkit-user-select:text;-webkit-touch-callout:default}
 body{
   margin:0;background:var(--paper);color:var(--ink);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -87,7 +94,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .clock{
   width:100%;border:0;border-radius:var(--r);padding:.95rem;font-size:1.05rem;font-weight:600;
   background:var(--ink);color:var(--paper);min-height:50px;margin-top:.9rem;
-  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
 }
 .clock.is-live{background:var(--live-dot);color:#2A1C00}
 .clock[disabled]{opacity:.45;cursor:default}
@@ -95,7 +102,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .link{
   background:none;border:0;font-size:.85rem;color:var(--muted);text-decoration:underline;
   padding:.6rem .5rem;margin:0 -.5rem;min-height:44px;
-  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
 }
 /* Destructive, and sat 2px from a navigation link: push it to the far side and
    colour it so it never reads as the same kind of action. */
