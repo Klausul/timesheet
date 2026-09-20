@@ -1,5 +1,5 @@
 // Bump CACHE when you change any file below, so phones pick up the new version.
-const CACHE = "timesheet-v12";
+const CACHE = "timesheet-v14";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-512-maskable.png",
   "./icons/apple-touch-icon.png"];

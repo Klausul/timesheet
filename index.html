@@ -59,7 +59,11 @@ button{font:inherit;color:inherit;cursor:pointer}
 .dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--live-dot);align-self:center;flex:none}
 .now__sub{color:var(--muted);font-size:.9rem;min-height:1.3em}
 
-.fields{display:flex;flex-wrap:wrap;gap:.5rem;margin:.9rem 0 0}
+.fields{display:flex;flex-wrap:wrap;justify-content:center;gap:.5rem;margin:.9rem 0 0}
+/* In and Out split the first row; Lunch drops below, centred, rather than
+   wrapping into a narrow orphan box beside dead space. */
+.fields > .field:nth-child(-n+2){flex:1 1 0;min-width:0}
+.fields > .field:nth-child(3){flex:0 0 auto}
 .field{
   display:flex;align-items:center;gap:.45rem;background:var(--surface);
   border:1px solid var(--line);border-radius:var(--r);padding:.4rem .6rem;min-height:44px;
@@ -70,6 +74,7 @@ button{font:inherit;color:inherit;cursor:pointer}
   padding:0;min-width:0;
 }
 .field input[type=time]{width:6.2em}
+.fields > .field input[type=time]{width:auto;flex:1 1 0;min-width:0}
 .field input[type=number]{width:3em;text-align:right}
 /* Firefox reserves the spinner inside the content box, so a narrow right-aligned
    field collides with it. The arrows add nothing here — min/max/step and inputmode
@@ -446,8 +451,12 @@ function renderDay(){
 
   const total = $("total");
   total.classList.toggle("is-live", running);
+  // A clocked day can net zero while the lunch deduction still exceeds the span.
+  // "and counting" next to a frozen 0:00 reads as broken, so name the reason.
+  const shortOfLunch = !!d.in && net === 0 && (d.lunch||0) > 0;
+  const unit = shortOfLunch ? "less than lunch" : running ? "and counting" : "hours";
   total.innerHTML = (running?'<span class="dot"></span>':"") +
-    "<span>"+hm(net)+"</span><span class='unit'>"+(running?"and counting":"hours")+"</span>";
+    "<span>"+hm(net)+"</span><span class='unit'>"+unit+"</span>";
 
   $("inT").value = d.in || "";
   $("outT").value = d.out || "";
@@ -600,7 +609,7 @@ function renderWeek(){
       '<span class="dayname">'+DAYNAMES[i]+'<small>'+date.getDate()+" "+MONTHS[date.getMonth()]+'</small></span>'+
       '<span class="minibar">'+segs+'</span>'+
       '<span class="total'+(net?"":" zero")+'">'+(net?hm(net):"–")+'</span>';
-    btn.addEventListener("click", ()=>{ selected = k; render(); window.scrollTo({top:0,behavior:"smooth"}); });
+    btn.addEventListener("click", ()=>{ selected = k; render(); });
     li.appendChild(btn); list.appendChild(li);
   });
 
