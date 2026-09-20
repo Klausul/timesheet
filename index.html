@@ -145,7 +145,20 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   min-height:44px;-webkit-tap-highlight-color:transparent;
 }
 .chip .swatch{width:.55rem;height:.55rem}
+/* A long name must not push the "more" toggle onto a second row, so the last
+   chip left on the row gives up width and ellipsises instead. flex-wrap only
+   shrinks items once they are on a line together, hence the explicit shrink
+   plus min-width:0 — without the latter the text floor keeps the chip wide. */
+/* flex-wrap moves an over-wide item to its own line rather than shrinking it,
+   so the cap has to come from max-width: leave room for a "nn more…" toggle
+   (~7.5rem incl. the gap) whenever one is present. */
+.chip{min-width:0;max-width:100%;flex:0 1 auto}
+.chips.has-more .chip:not(.chip--more){max-width:calc(100% - 7.5rem)}
+.chip__name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.chip--more{flex:0 0 auto}
 .chip--more{color:var(--muted);border-style:dashed}
+/* .chip sets display:flex, which would otherwise win over the UA [hidden] rule. */
+.chip[hidden]{display:none}
 .empty{color:var(--muted);font-size:.9rem;margin:.4rem 0 0}
 
 /* ---- week ---- */
@@ -194,9 +207,39 @@ summary{
 details[open] summary{margin-bottom:.8rem}
 .plist{list-style:none;margin:0 0 .8rem;padding:0}
 .plist li{display:flex;align-items:center;gap:.5rem;padding:.35rem 0;border-bottom:1px solid var(--line)}
+/* The swatch is the tap target for the colour picker, so it carries a full 44px
+   hit area around a small dot rather than growing the dot itself. */
+.pcolor{
+  background:none;border:0;padding:0;flex:none;width:44px;height:44px;
+  margin:-.5rem -.7rem -.5rem -.6rem;display:flex;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+}
+.pcolor .swatch{width:1.05rem;height:1.05rem;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.14)}
+.pcolor[aria-expanded=true] .swatch{box-shadow:0 0 0 2px var(--surface),0 0 0 4px currentColor}
+
+/* Anchored to the row so it opens beside the swatch it belongs to. */
+.plist li{position:relative}
+.cpick{
+  position:absolute;z-index:20;top:100%;left:-.35rem;margin-top:.2rem;
+  display:grid;grid-template-columns:repeat(4,44px);gap:.15rem;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:.3rem;
+  box-shadow:0 8px 24px rgba(0,0,0,.18);
+}
+@media (prefers-color-scheme:dark){ .cpick{box-shadow:0 8px 24px rgba(0,0,0,.5)} }
+.cpick button{
+  background:none;border:0;padding:0;width:44px;height:44px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;
+}
+.cpick .dot{
+  width:1.35rem;height:1.35rem;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.14);color:#fff;font-size:.8rem;line-height:1;
+}
+.cpick button[aria-checked=true] .dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.14),0 0 0 2px var(--surface),0 0 0 4px var(--line-strong)}
 .plist input{font:inherit;background:none;border:0;color:inherit;padding:.5rem 0;min-width:0;min-height:44px}
 .plist .pname{flex:1}
-.plist .pcode{width:9em;flex:none;text-align:right;color:var(--muted)}
+/* The swatch button takes real width now, so the code column gives some back;
+   codes are short and the name is what needs the room. */
+.plist .pcode{width:5.5em;flex:none;text-align:right;color:var(--muted)}
 .plist .rm{
   background:none;border:0;color:var(--muted);font-size:1.15rem;
   flex:none;width:44px;height:44px;margin:-.5rem -.6rem -.5rem 0;
@@ -558,28 +601,66 @@ function renderAlloc(){
     const b = document.createElement("button");
     b.className = "chip";
     b.type = "button";
-    b.innerHTML = '<span class="swatch" style="background:'+p.color+'"></span>'+esc(p.name);
+    b.innerHTML = '<span class="swatch" style="background:'+p.color+'"></span>'+
+      '<span class="chip__name">'+esc(p.name)+'</span>';
     b.addEventListener("click", ()=>{ chipsExpanded = false; addProjectToDay(selected, p.id); });
     chips.appendChild(b);
+    return b;
   };
 
-  // Hiding a single project behind a toggle costs the same room as showing it,
-  // so only collapse when it actually saves space.
-  const CHIP_LIMIT = 4;
-  const collapse = !chipsExpanded && ranked.length > CHIP_LIMIT + 1;
-  const shown = collapse ? ranked.slice(0, CHIP_LIMIT) : ranked;
-  shown.forEach(addChip);
-
-  const hidden = ranked.length - shown.length;
-  if(hidden > 0 || chipsExpanded){
-    const more = document.createElement("button");
+  const els = ranked.map(addChip);
+  let more = null;
+  if(ranked.length){
+    more = document.createElement("button");
     more.className = "chip chip--more";
     more.type = "button";
-    more.setAttribute("aria-expanded", chipsExpanded ? "true" : "false");
-    more.textContent = chipsExpanded ? "Show fewer" : hidden+" more…";
     more.addEventListener("click", ()=>{ chipsExpanded = !chipsExpanded; renderAlloc(); });
     chips.appendChild(more);
   }
+  fitChips(chips, els, more);
+}
+
+/* Project names vary in width, so no fixed chip count keeps the collapsed row to
+   one line. Lay every chip out, then hide from the end until the last visible one
+   still shares the first row with the "more" toggle. Widths are only known once
+   the chips are in the document, so this runs after they are appended — measuring
+   offsetTop rather than summing widths keeps it honest about gaps and padding. */
+function fitChips(chips, els, more){
+  if(!more) return;
+  const total = els.length;
+  els.forEach(b=>{ b.hidden = false; });
+  more.setAttribute("aria-expanded", chipsExpanded ? "true" : "false");
+
+  if(chipsExpanded){
+    chips.classList.remove("has-more");
+    more.hidden = false;
+    more.textContent = "Show fewer";
+    more.removeAttribute("aria-label");
+    return;
+  }
+
+  // The row all chips start on. Chips are never taller than one line, so any
+  // element sitting lower than this has wrapped.
+  const rowTop = els[0].offsetTop;
+
+  more.hidden = true;
+  chips.classList.remove("has-more");
+  if(els[total-1].offsetTop === rowTop) return;   // everything fits: no toggle needed
+
+  const label = n => { more.textContent = n+" more…";
+                       more.setAttribute("aria-label","Show "+n+" more project"+(n===1?"":"s")); };
+  more.hidden = false;
+  chips.classList.add("has-more");
+  // One chip always stays: a row holding nothing but "n more…" hides the very
+  // thing the row is for, and the toggle may wrap to its own line instead.
+  let shown = total;
+  label(0);
+  while(shown > 1 && (els[shown-1].offsetTop !== rowTop || more.offsetTop !== rowTop)){
+    shown--;
+    els[shown].hidden = true;
+    label(total - shown);
+  }
+  label(total - shown);
 }
 
 function renderWeek(){
@@ -640,16 +721,24 @@ function renderWeek(){
 }
 
 function renderProjects(){
+  // Rebuilding the list detaches any open picker, so drop the stale reference.
+  colorPicker = null;
   const ul = $("plist"); ul.innerHTML = "";
   if(!state.projects.length){
     ul.innerHTML = '<li style="color:var(--muted);font-size:.9rem;border:0">Add the projects you report on.</li>';
   }
   state.projects.forEach(p=>{
     const li = document.createElement("li");
-    li.innerHTML = '<span class="swatch" style="background:'+p.color+'"></span>'+
+    li.innerHTML = '<button class="pcolor" type="button" aria-haspopup="true" aria-expanded="false" '+
+        'aria-label="Colour for '+esc(p.name)+'" style="color:'+p.color+'">'+
+        '<span class="swatch" style="background:'+p.color+'"></span></button>'+
       '<input class="pname" value="'+esc(p.name)+'" aria-label="Project name">'+
       '<input class="pcode" value="'+esc(p.code||"")+'" placeholder="code" aria-label="Project code">'+
       '<button class="rm" aria-label="Delete '+esc(p.name)+'">&times;</button>';
+    li.querySelector(".pcolor").addEventListener("click", e=>{
+      e.stopPropagation();
+      openColorPicker(li, e.currentTarget, p);
+    });
     li.querySelector(".pname").addEventListener("change", e=>{ p.name = e.target.value.trim()||p.name; save(); render(); });
     li.querySelector(".pcode").addEventListener("change", e=>{ p.code = e.target.value.trim(); save(); render(); });
     li.querySelector(".rm").addEventListener("click", ()=>{
@@ -664,6 +753,52 @@ function renderProjects(){
     ul.appendChild(li);
   });
 }
+
+/* One picker is open at a time; it is torn down on any outside tap, on Escape,
+   and by render(), which rebuilds the list underneath it. */
+let colorPicker = null;
+function closeColorPicker(){
+  if(!colorPicker) return;
+  colorPicker.btn.setAttribute("aria-expanded","false");
+  colorPicker.el.remove();
+  colorPicker = null;
+}
+function openColorPicker(li, btn, p){
+  const wasOpen = colorPicker && colorPicker.btn === btn;
+  closeColorPicker();
+  if(wasOpen) return;                       // second tap on the same swatch closes it
+
+  const el = document.createElement("div");
+  el.className = "cpick";
+  el.setAttribute("role","radiogroup");
+  el.setAttribute("aria-label","Colour for "+p.name);
+  COLORS.forEach((c,i)=>{
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role","radio");
+    b.setAttribute("aria-checked", c === p.color ? "true" : "false");
+    b.setAttribute("aria-label","Colour "+(i+1));
+    b.innerHTML = '<span class="dot" style="background:'+c+'">'+(c === p.color ? "&#10003;" : "")+'</span>';
+    b.addEventListener("click", e=>{
+      e.stopPropagation();
+      p.color = c;
+      closeColorPicker();
+      save(); render();
+    });
+    el.appendChild(b);
+  });
+  el.addEventListener("click", e=>e.stopPropagation());
+  li.appendChild(el);
+  btn.setAttribute("aria-expanded","true");
+  colorPicker = {el, btn};
+
+  // Keep it inside the card when the row sits near the right edge.
+  const card = li.closest("details").getBoundingClientRect();
+  const box = el.getBoundingClientRect();
+  if(box.right > card.right - 8) el.style.left = (parseFloat(getComputedStyle(el).left) - (box.right - (card.right - 8)))+"px";
+}
+document.addEventListener("click", closeColorPicker);
+document.addEventListener("keydown", e=>{ if(e.key === "Escape") closeColorPicker(); });
 
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
