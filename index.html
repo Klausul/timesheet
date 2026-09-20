@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Timesheet</title>
+<meta name="description" content="Clock in, clock out, split the day across projects.">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#16202E" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#EFF1F5" media="(prefers-color-scheme: light)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Timesheet">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="icon" href="./icons/icon-192.png">
+<style>
+:root{
+  --paper:#EFF1F5; --surface:#FFFFFF; --ink:#16202E; --muted:#5D6B7F;
+  --line:#D7DCE4; --line-strong:#BFC7D3; --live:#B06A00; --live-dot:#FFB020;
+  --empty:#C9D0DA; --weekend:#F4F6F9; --danger:#B3261E;
+  --r:10px;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#101827; --surface:#17212F; --ink:#E7ECF3; --muted:#93A1B5;
+    --line:#26313F; --line-strong:#3A4757; --live:#FFB020; --live-dot:#FFB020;
+    --empty:#2C3747; --weekend:#141D2B; --danger:#F2857C;
+  }
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  font-size:16px;line-height:1.45;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;
+  -webkit-font-smoothing:antialiased;
+}
+main{max-width:34rem;margin:0 auto;padding:1.25rem 1.1rem 4rem}
+section{margin-bottom:1.6rem}
+h2{font-size:.9rem;font-weight:600;color:var(--muted);margin:0 0 .6rem}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--live-dot);outline-offset:2px;border-radius:6px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ---- selected day ---- */
+.now__date{font-size:.95rem;color:var(--muted);margin-bottom:.1rem}
+.now__total{
+  display:flex;align-items:baseline;gap:.5rem;flex-wrap:wrap;
+  font-size:clamp(3rem,15vw,4.2rem);
+  line-height:1;font-weight:650;letter-spacing:-.045em;margin:.1rem 0 .2rem;
+}
+.now__total .unit{font-size:1rem;font-weight:500;letter-spacing:0;color:var(--muted)}
+.now__total.is-live{color:var(--live)}
+.dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--live-dot);align-self:center;flex:none}
+.now__sub{color:var(--muted);font-size:.9rem;min-height:1.3em}
+
+.fields{display:flex;flex-wrap:wrap;gap:.5rem;margin:.9rem 0 0}
+.field{
+  display:flex;align-items:center;gap:.45rem;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r);padding:.4rem .6rem;min-height:44px;
+}
+.field label{font-size:.8rem;color:var(--muted)}
+.field input{
+  font:inherit;font-variant-numeric:tabular-nums;background:none;border:0;color:inherit;
+  padding:0;min-width:0;
+}
+.field input[type=time]{width:6.2em}
+.field input[type=number]{width:3em;text-align:right}
+/* Firefox reserves the spinner inside the content box, so a narrow right-aligned
+   field collides with it. The arrows add nothing here — min/max/step and inputmode
+   are set, and iOS never draws them anyway — so drop them on every engine. */
+input[type=number]{-moz-appearance:textfield;appearance:textfield}
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.field .suffix{font-size:.8rem;color:var(--muted)}
+
+.clock{
+  width:100%;border:0;border-radius:var(--r);padding:.95rem;font-size:1.05rem;font-weight:600;
+  background:var(--ink);color:var(--paper);min-height:50px;margin-top:.9rem;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+}
+.clock.is-live{background:var(--live-dot);color:#2A1C00}
+.clock[disabled]{opacity:.45;cursor:default}
+.linkrow{display:flex;justify-content:space-between;gap:1.5rem;margin-top:.15rem}
+.link{
+  background:none;border:0;font-size:.85rem;color:var(--muted);text-decoration:underline;
+  padding:.6rem .5rem;margin:0 -.5rem;min-height:44px;
+  -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+}
+/* Destructive, and sat 2px from a navigation link: push it to the far side and
+   colour it so it never reads as the same kind of action. */
+.link--danger{color:var(--danger)}
+
+/* ---- allocation ---- */
+.bar{
+  position:relative;display:flex;width:100%;height:2.6rem;border-radius:var(--r);
+  overflow:hidden;background:var(--empty);touch-action:none;user-select:none;-webkit-user-select:none;
+}
+.bar__seg{height:100%;min-width:0}
+.bar__handle{
+  position:absolute;top:0;bottom:0;width:44px;margin-left:-22px;cursor:ew-resize;
+  display:flex;align-items:center;justify-content:center;touch-action:none;
+  -webkit-tap-highlight-color:transparent;
+}
+.bar__handle::after{content:"";width:2px;height:100%;background:var(--surface);opacity:.9}
+.bar__handle:active::after{width:3px}
+.bar--empty{align-items:center;justify-content:center;color:var(--muted);font-size:.85rem}
+
+.legend{list-style:none;margin:.7rem 0 0;padding:0}
+.legend li{display:flex;align-items:center;gap:.6rem;padding:.42rem 0;border-bottom:1px solid var(--line)}
+.legend li:last-child{border-bottom:0}
+.swatch{width:.7rem;height:.7rem;border-radius:3px;flex:none}
+.legend .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.legend input{
+  font:inherit;width:3.4em;text-align:right;background:var(--surface);
+  border:1px solid var(--line);border-radius:6px;padding:.5rem .35rem;color:inherit;
+  min-height:40px;
+}
+.legend .hrs{width:4em;flex:none;text-align:right;color:var(--muted);font-size:.9rem;font-variant-numeric:tabular-nums}
+.legend .rm{
+  background:none;border:0;color:var(--muted);font-size:1.15rem;line-height:1;
+  flex:none;width:44px;height:44px;margin:-.5rem -.6rem -.5rem 0;
+}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.7rem}
+.chip{
+  background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  padding:.5rem .85rem;font-size:.85rem;display:flex;align-items:center;gap:.4rem;
+  min-height:44px;-webkit-tap-highlight-color:transparent;
+}
+.chip .swatch{width:.55rem;height:.55rem}
+.chip--more{color:var(--muted);border-style:dashed}
+.empty{color:var(--muted);font-size:.9rem;margin:.4rem 0 0}
+
+/* ---- week ---- */
+.weeknav{display:flex;align-items:center;gap:.5rem;margin-bottom:.7rem}
+.weeknav__label{flex:1;font-weight:600}
+.weeknav__label span{display:block;font-size:.82rem;font-weight:400;color:var(--muted)}
+.nav{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  width:44px;height:44px;font-size:1.1rem;line-height:1;flex:none;
+  -webkit-tap-highlight-color:transparent;
+}
+.days{list-style:none;margin:0;padding:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.days li+li{border-top:1px solid var(--line)}
+.day{
+  width:100%;display:grid;grid-template-columns:2.6rem 1fr 3.4rem;gap:.7rem;align-items:center;
+  background:none;border:0;padding:.7rem .75rem;text-align:left;min-height:44px;
+  user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+}
+.day.is-selected{background:var(--paper)}
+.day.is-today .dayname{font-weight:650}
+/* Weekends read as "not a working day by default" — dimmed label and a faint
+   tint, but still tappable, and real logged hours stay at full contrast. */
+.day.is-weekend{background:var(--weekend)}
+.day.is-weekend .dayname{color:var(--muted)}
+.day.is-weekend.is-selected{background:var(--paper)}
+.dayname{font-size:.9rem}
+.dayname small{display:block;color:var(--muted);font-size:.72rem;font-weight:400}
+.minibar{display:flex;height:4px;border-radius:2px;overflow:hidden;background:var(--empty)}
+.day .total{text-align:right;font-size:.95rem}
+.day .total.zero{color:var(--muted)}
+.weeksum{margin-top:.9rem}
+.weeksum li{display:flex;align-items:center;gap:.6rem;padding:.35rem 0;border-bottom:1px solid var(--line)}
+.weeksum ul{list-style:none;margin:0;padding:0}
+.weeksum .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.weeksum .code{color:var(--muted);font-size:.8rem;flex:none;white-space:nowrap}
+.weeksum .hrs{font-variant-numeric:tabular-nums}
+.weeksum .grand{display:flex;justify-content:space-between;padding-top:.6rem;font-weight:650}
+
+/* ---- settings ---- */
+details{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:.75rem .9rem}
+summary{
+  cursor:pointer;font-size:.9rem;color:var(--muted);font-weight:600;
+  padding:.7rem 0;margin:-.7rem 0;min-height:44px;display:flex;align-items:center;
+  -webkit-tap-highlight-color:transparent;
+}
+details[open] summary{margin-bottom:.8rem}
+.plist{list-style:none;margin:0 0 .8rem;padding:0}
+.plist li{display:flex;align-items:center;gap:.5rem;padding:.35rem 0;border-bottom:1px solid var(--line)}
+.plist input{font:inherit;background:none;border:0;color:inherit;padding:.5rem 0;min-width:0;min-height:44px}
+.plist .pname{flex:1}
+.plist .pcode{width:9em;flex:none;text-align:right;color:var(--muted)}
+.plist .rm{
+  background:none;border:0;color:var(--muted);font-size:1.15rem;
+  flex:none;width:44px;height:44px;margin:-.5rem -.6rem -.5rem 0;
+}
+.addrow{display:flex;flex-wrap:wrap;gap:.5rem}
+.addrow input{
+  font:inherit;background:var(--paper);border:1px solid var(--line);border-radius:8px;
+  padding:.6rem;color:inherit;min-width:0;min-height:44px;
+}
+.addrow input:first-child{flex:1 1 9rem}
+.addrow input:nth-child(2){flex:1 1 6em;width:auto;max-width:9.5em}
+.btn{
+  background:var(--paper);border:1px solid var(--line-strong);border-radius:8px;
+  padding:.6rem 1rem;font-size:.9rem;min-height:44px;-webkit-tap-highlight-color:transparent;
+}
+.tools{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem;padding-top:.8rem;border-top:1px solid var(--line)}
+.toast{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:calc(1.5rem + env(safe-area-inset-bottom,0px));
+  background:var(--ink);color:var(--paper);padding:.55rem 1rem;border-radius:999px;font-size:.9rem;
+  opacity:0;pointer-events:none;transition:opacity .18s;z-index:10;
+}
+.toast.show{opacity:1}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</head>
+<body>
+<main>
+
+  <section class="now">
+    <div class="now__date" id="selDate">—</div>
+    <div class="now__total" id="total"><span>0:00</span><span class="unit">hours</span></div>
+    <div class="now__sub" id="subline"></div>
+
+    <button class="clock" id="clockBtn">Clock in</button>
+    <div class="linkrow">
+      <button class="link" id="jumpToday">Go to today</button>
+      <button class="link link--danger" id="clearDay">Clear this day</button>
+    </div>
+
+    <div class="fields">
+      <div class="field"><label for="inT">In</label><input type="time" id="inT"></div>
+      <div class="field"><label for="outT">Out</label><input type="time" id="outT"></div>
+      <div class="field"><label for="lunchT">Lunch</label><input type="number" id="lunchT" min="0" max="240" step="5" inputmode="numeric"><span class="suffix">min</span></div>
+    </div>
+  </section>
+
+  <section class="alloc">
+    <h2 id="allocHead">Today's split</h2>
+    <div class="bar" id="bar" role="group" aria-labelledby="allocHead"></div>
+    <ul class="legend" id="legend"></ul>
+    <div class="chips" id="chips"></div>
+    <p class="empty" id="allocEmpty" hidden>Add a project below to split this day.</p>
+  </section>
+
+  <section class="week">
+    <div class="weeknav">
+      <button class="nav" id="prevW" aria-label="Previous week">‹</button>
+      <div class="weeknav__label" id="weekLabel">Week<span>—</span></div>
+      <button class="nav" id="nextW" aria-label="Next week">›</button>
+    </div>
+    <ol class="days" id="days"></ol>
+    <div class="weeksum">
+      <ul id="weekProjects"></ul>
+      <div class="grand"><span>Week total</span><span id="weekTotal">0:00</span></div>
+    </div>
+  </section>
+
+  <details id="setup">
+    <summary>Projects and data</summary>
+    <ul class="plist" id="plist"></ul>
+    <div class="addrow">
+      <input id="pName" placeholder="Project name" autocomplete="off">
+      <input id="pCode" placeholder="Code" autocomplete="off" inputmode="numeric">
+      <button class="btn" id="pAdd">Add</button>
+    </div>
+    <div class="field" style="margin-top:1rem;display:inline-flex">
+      <label for="defLunch">Default lunch</label>
+      <input type="number" id="defLunch" min="0" max="240" step="5" inputmode="numeric">
+      <span class="suffix">min</span>
+    </div>
+    <div class="tools">
+      <button class="btn" id="exportBtn">Export JSON</button>
+      <button class="btn" id="importBtn">Import JSON</button>
+      <input type="file" id="importFile" accept="application/json,.json" class="sr">
+    </div>
+  </details>
+
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const KEY = "timesheet.v1";
+const COLORS = ["#3B82C4","#2FA58C","#C05E9B","#C96A2E","#7B6CD9","#5E9B3F","#C7494F","#7E8896"];
+const DAYNAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/* ---------- state ---------- */
+let state = load();
+let anchor = new Date();          // any date inside the shown week
+let selected = key(new Date());   // yyyy-mm-dd of the day being edited
+let chipsExpanded = false;        // is the full project list showing?
+let lastRenderedDay = null;       // collapses the list when the day changes
+
+function load(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){
+      const s = JSON.parse(raw);
+      s.settings = Object.assign({lunchMinutes:30}, s.settings);
+      s.projects = s.projects || [];
+      s.days = s.days || {};
+      return s;
+    }
+  }catch(e){ console.warn("Could not read saved data", e); }
+  return {version:1, settings:{lunchMinutes:30}, projects:[], days:{}};
+}
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify(state)); }
+  catch(e){ toast("Could not save — storage is full or blocked."); }
+}
+
+/* ---------- dates ---------- */
+function key(d){
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function fromKey(k){ const [y,m,d]=k.split("-").map(Number); return new Date(y,m-1,d); }
+function monday(d){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay()+6)%7));
+  return x;
+}
+function weekDays(d){
+  const m = monday(d);
+  return Array.from({length:7}, (_,i)=>{ const x=new Date(m); x.setDate(m.getDate()+i); return x; });
+}
+function isoWeek(d){
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay()||7));
+  const y0 = new Date(Date.UTC(t.getUTCFullYear(),0,1));
+  return Math.ceil(((t-y0)/86400000 + 1)/7);
+}
+function hm(min){
+  min = Math.max(0, Math.round(min));
+  return Math.floor(min/60)+":"+String(min%60).padStart(2,"0");
+}
+// Decimal hours, for the figures that get reported rather than glanced at.
+function dec(min){ return (Math.max(0, min)/60).toFixed(2); }
+function toMin(t){ if(!t) return null; const [h,m]=t.split(":").map(Number); return h*60+m; }
+function nowTime(){ const d=new Date(); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
+
+/* ---------- day records ---------- */
+// With create=true this returns the stored record to mutate; without it, a blank
+// stand-in for rendering, so reading a day never writes one into state.
+function getDay(k, create){
+  const d = state.days[k];
+  if(d) return d;
+  if(create) return state.days[k] = {in:null, out:null, lunch:state.settings.lunchMinutes, alloc:[]};
+  return {in:null, out:null, lunch:state.settings.lunchMinutes, alloc:[]};
+}
+// Minutes worked, less lunch. A day that is clocked in but not out counts up to now.
+function netMinutes(k){
+  const d = state.days[k];
+  if(!d || !d.in) return 0;
+  const start = toMin(d.in);
+  let end = d.out ? toMin(d.out) : (k===key(new Date()) ? toMin(nowTime()) : null);
+  if(end===null) return 0;
+  if(end < start) end += 1440;             // shift ending after midnight
+  return Math.max(0, end - start - (d.lunch||0));
+}
+function isRunning(k){ const d=state.days[k]; return !!(d && d.in && !d.out && k===key(new Date())); }
+function project(id){ return state.projects.find(p=>p.id===id); }
+// Most recent day each project was used, so the picker can lead with the ones
+// actually in rotation. Derived from state.days — nothing extra is stored.
+function lastUsed(){
+  const seen = new Map();
+  for(const k in state.days){
+    for(const a of state.days[k].alloc||[]){
+      if(!seen.has(a.id) || seen.get(a.id) < k) seen.set(a.id, k);
+    }
+  }
+  return seen;
+}
+
+/* ---------- allocation maths ---------- */
+// Largest-remainder rounding: floor everything, then hand the leftover points to
+// the biggest fractions so the result is whole numbers summing to exactly 100.
+// Callers always pass values summing to 100, but an imported file need not, so
+// rescale first and keep the trailing loops as a backstop for that case.
+function roundAlloc(alloc){
+  if(!alloc.length) return;
+  const total = alloc.reduce((a,b)=>a+b.pct,0);
+  if(total > 0 && Math.abs(total-100) > 1e-9) alloc.forEach(a=>a.pct = a.pct/total*100);
+  else if(total <= 0) alloc.forEach(a=>a.pct = 100/alloc.length);
+  const floors = alloc.map(a=>Math.floor(a.pct));
+  let rest = 100 - floors.reduce((a,b)=>a+b,0);
+  const order = alloc.map((a,i)=>({i, frac:a.pct-Math.floor(a.pct)})).sort((a,b)=>b.frac-a.frac);
+  alloc.forEach((a,i)=>a.pct=floors[i]);
+  for(let n=0; n<order.length && rest>0; n++, rest--) alloc[order[n].i].pct++;
+  while(rest>0){ alloc[0].pct++; rest--; }
+}
+function setPct(alloc, idx, value){
+  value = Math.max(0, Math.min(100, value));
+  const others = alloc.filter((_,i)=>i!==idx);
+  if(!others.length){ alloc[idx].pct = 100; return; }
+  const remain = 100 - value;
+  const sum = others.reduce((a,b)=>a+b.pct,0);
+  if(sum <= 0) others.forEach(o=>o.pct = remain/others.length);
+  else others.forEach(o=>o.pct = o.pct/sum*remain);
+  alloc[idx].pct = value;
+  roundAlloc(alloc);
+}
+function addProjectToDay(k, id){
+  const d = getDay(k, true);
+  if(d.alloc.some(a=>a.id===id)) return;
+  const share = 100/(d.alloc.length+1);
+  d.alloc.forEach(a=>a.pct = a.pct*(100-share)/100);
+  d.alloc.push({id, pct:share});
+  roundAlloc(d.alloc);
+  save(); render();
+}
+function removeProjectFromDay(k, id){
+  const d = getDay(k, true);
+  const i = d.alloc.findIndex(a=>a.id===id);
+  if(i<0) return;
+  const freed = d.alloc[i].pct;
+  d.alloc.splice(i,1);
+  const sum = d.alloc.reduce((a,b)=>a+b.pct,0);
+  if(d.alloc.length){
+    if(sum<=0) d.alloc.forEach(a=>a.pct = 100/d.alloc.length);
+    else d.alloc.forEach(a=>a.pct += a.pct/sum*freed);
+    roundAlloc(d.alloc);
+  }
+  save(); render();
+}
+
+/* ---------- render ---------- */
+const $ = id => document.getElementById(id);
+
+function render(){
+  if(selected !== lastRenderedDay){ chipsExpanded = false; lastRenderedDay = selected; }
+  renderDay();
+  renderAlloc();
+  renderWeek();
+  renderProjects();
+  $("defLunch").value = state.settings.lunchMinutes;
+}
+
+function renderDay(){
+  const d = getDay(selected);
+  const date = fromKey(selected);
+  const today = key(new Date());
+  const running = isRunning(selected);
+  const net = netMinutes(selected);
+
+  $("selDate").textContent =
+    (selected===today ? "Today, " : "") +
+    date.toLocaleDateString(undefined,{weekday:"long", day:"numeric", month:"long"});
+
+  const total = $("total");
+  total.classList.toggle("is-live", running);
+  total.innerHTML = (running?'<span class="dot"></span>':"") +
+    "<span>"+hm(net)+"</span><span class='unit'>"+(running?"and counting":"hours")+"</span>";
+
+  $("inT").value = d.in || "";
+  $("outT").value = d.out || "";
+  $("lunchT").value = d.lunch ?? state.settings.lunchMinutes;
+
+  // The In/Out/Lunch fields already show a finished day, so say nothing then.
+  let sub;
+  if(!d.in) sub = "Not started.";
+  else if(running) sub = "Since "+d.in+".";
+  else if(!d.out) sub = "From "+d.in+", no end yet.";
+  else sub = "";
+  $("subline").textContent = sub;
+
+  $("allocHead").textContent = (selected===today ? "Today" : date.toLocaleDateString(undefined,{weekday:"long"}))+"'s split";
+
+  const btn = $("clockBtn");
+  btn.classList.toggle("is-live", running);
+  if(selected !== today){
+    btn.textContent = "Clock in"; btn.disabled = true;
+  }else{
+    btn.disabled = false;
+    btn.textContent = !d.in ? "Clock in" : running ? "Clock out" : "Clocked out";
+    if(!running && d.in && d.out) btn.disabled = true;
+  }
+}
+
+function renderAlloc(){
+  const d = getDay(selected);
+  const net = netMinutes(selected);
+  const bar = $("bar"), legend = $("legend"), chips = $("chips");
+  bar.innerHTML = ""; legend.innerHTML = ""; chips.innerHTML = "";
+
+  const alloc = d.alloc.filter(a=>project(a.id));
+  $("allocEmpty").hidden = alloc.length>0 || state.projects.length>0;
+  bar.classList.toggle("bar--empty", alloc.length===0);
+
+  if(!alloc.length){
+    bar.textContent = state.projects.length ? "Nothing split yet" : "No projects saved yet";
+  }else{
+    let cum = 0;
+    alloc.forEach((a,i)=>{
+      const seg = document.createElement("div");
+      seg.className = "bar__seg";
+      seg.style.width = a.pct+"%";
+      seg.style.background = project(a.id).color;
+      seg.title = project(a.id).name+" "+a.pct+"%";
+      bar.appendChild(seg);
+      cum += a.pct;
+      if(i < alloc.length-1){
+        const h = document.createElement("div");
+        h.className = "bar__handle";
+        h.style.left = cum+"%";
+        h.dataset.i = i;
+        h.setAttribute("role","separator");
+        h.setAttribute("aria-label","Move split between "+project(a.id).name+" and "+project(alloc[i+1].id).name);
+        bar.appendChild(h);
+      }
+    });
+  }
+
+  alloc.forEach((a,i)=>{
+    const p = project(a.id);
+    const li = document.createElement("li");
+    li.innerHTML =
+      '<span class="swatch" style="background:'+p.color+'"></span>'+
+      '<span class="name">'+esc(p.name)+'</span>'+
+      '<input type="number" min="0" max="100" step="1" inputmode="numeric" value="'+a.pct+'" aria-label="'+esc(p.name)+' percent">'+
+      '<span class="hrs">'+dec(net*a.pct/100)+'</span>'+
+      '<button class="rm" aria-label="Remove '+esc(p.name)+' from this day">&times;</button>';
+    li.querySelector("input").addEventListener("change", e=>{
+      const v = parseInt(e.target.value,10);
+      const day = getDay(selected, true);
+      setPct(day.alloc, day.alloc.findIndex(x=>x.id===a.id), isNaN(v)?0:v);
+      save(); render();
+    });
+    li.querySelector(".rm").addEventListener("click", ()=>removeProjectFromDay(selected, a.id));
+    legend.appendChild(li);
+  });
+
+  const available = state.projects.filter(p=>!alloc.some(a=>a.id===p.id));
+  const used = lastUsed();
+  // Recently used first; projects never used keep their creation order behind them.
+  const ranked = available.slice().sort((a,b)=>{
+    const ua = used.get(a.id), ub = used.get(b.id);
+    if(ua && ub) return ua < ub ? 1 : ua > ub ? -1 : 0;
+    if(ua) return -1;
+    if(ub) return 1;
+    return state.projects.indexOf(a) - state.projects.indexOf(b);
+  });
+
+  const addChip = p => {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.type = "button";
+    b.innerHTML = '<span class="swatch" style="background:'+p.color+'"></span>'+esc(p.name);
+    b.addEventListener("click", ()=>{ chipsExpanded = false; addProjectToDay(selected, p.id); });
+    chips.appendChild(b);
+  };
+
+  // Hiding a single project behind a toggle costs the same room as showing it,
+  // so only collapse when it actually saves space.
+  const CHIP_LIMIT = 4;
+  const collapse = !chipsExpanded && ranked.length > CHIP_LIMIT + 1;
+  const shown = collapse ? ranked.slice(0, CHIP_LIMIT) : ranked;
+  shown.forEach(addChip);
+
+  const hidden = ranked.length - shown.length;
+  if(hidden > 0 || chipsExpanded){
+    const more = document.createElement("button");
+    more.className = "chip chip--more";
+    more.type = "button";
+    more.setAttribute("aria-expanded", chipsExpanded ? "true" : "false");
+    more.textContent = chipsExpanded ? "Show fewer" : hidden+" more…";
+    more.addEventListener("click", ()=>{ chipsExpanded = !chipsExpanded; renderAlloc(); });
+    chips.appendChild(more);
+  }
+}
+
+function renderWeek(){
+  const days = weekDays(anchor);
+  const today = key(new Date());
+  $("weekLabel").innerHTML = "Week "+isoWeek(days[0])+
+    "<span>"+days[0].getDate()+" "+MONTHS[days[0].getMonth()]+" – "+days[6].getDate()+" "+MONTHS[days[6].getMonth()]+"</span>";
+
+  const list = $("days"); list.innerHTML = "";
+  let weekTotal = 0;
+  const byProject = new Map(); let unassigned = 0;
+
+  days.forEach((date,i)=>{
+    const k = key(date);
+    const net = netMinutes(k);
+    weekTotal += net;
+
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.className = "day" + (k===selected?" is-selected":"") + (k===today?" is-today":"") +
+                    (i>=5?" is-weekend":"");
+    btn.type = "button";
+
+    const alloc = getDay(k).alloc.filter(a=>project(a.id));
+    let segs = "";
+    if(net>0 && alloc.length){
+      alloc.forEach(a=>{
+        segs += '<span style="width:'+a.pct+'%;background:'+project(a.id).color+'"></span>';
+        byProject.set(a.id, (byProject.get(a.id)||0) + net*a.pct/100);
+      });
+    }else if(net>0){ unassigned += net; }
+
+    btn.innerHTML =
+      '<span class="dayname">'+DAYNAMES[i]+'<small>'+date.getDate()+" "+MONTHS[date.getMonth()]+'</small></span>'+
+      '<span class="minibar">'+segs+'</span>'+
+      '<span class="total'+(net?"":" zero")+'">'+(net?hm(net):"–")+'</span>';
+    btn.addEventListener("click", ()=>{ selected = k; render(); window.scrollTo({top:0,behavior:"smooth"}); });
+    li.appendChild(btn); list.appendChild(li);
+  });
+
+  $("weekTotal").textContent = dec(weekTotal);
+  const ul = $("weekProjects"); ul.innerHTML = "";
+  [...byProject.entries()].sort((a,b)=>b[1]-a[1]).forEach(([id,min])=>{
+    const p = project(id); if(!p) return;
+    const li = document.createElement("li");
+    li.innerHTML = '<span class="swatch" style="background:'+p.color+'"></span>'+
+      '<span class="name">'+esc(p.name)+'</span>'+
+      (p.code?'<span class="code">'+esc(p.code)+'</span>':"")+
+      '<span class="hrs">'+dec(min)+'</span>';
+    ul.appendChild(li);
+  });
+  if(unassigned>0){
+    const li = document.createElement("li");
+    li.innerHTML = '<span class="swatch" style="background:var(--empty)"></span>'+
+      '<span class="name">Not split yet</span><span class="hrs">'+dec(unassigned)+'</span>';
+    ul.appendChild(li);
+  }
+}
+
+function renderProjects(){
+  const ul = $("plist"); ul.innerHTML = "";
+  if(!state.projects.length){
+    ul.innerHTML = '<li style="color:var(--muted);font-size:.9rem;border:0">Add the projects you report on.</li>';
+  }
+  state.projects.forEach(p=>{
+    const li = document.createElement("li");
+    li.innerHTML = '<span class="swatch" style="background:'+p.color+'"></span>'+
+      '<input class="pname" value="'+esc(p.name)+'" aria-label="Project name">'+
+      '<input class="pcode" value="'+esc(p.code||"")+'" placeholder="code" aria-label="Project code">'+
+      '<button class="rm" aria-label="Delete '+esc(p.name)+'">&times;</button>';
+    li.querySelector(".pname").addEventListener("change", e=>{ p.name = e.target.value.trim()||p.name; save(); render(); });
+    li.querySelector(".pcode").addEventListener("change", e=>{ p.code = e.target.value.trim(); save(); render(); });
+    li.querySelector(".rm").addEventListener("click", ()=>{
+      if(!confirm("Delete "+p.name+"? Its share of past days is removed too.")) return;
+      state.projects = state.projects.filter(x=>x.id!==p.id);
+      Object.values(state.days).forEach(d=>{
+        const i = d.alloc.findIndex(a=>a.id===p.id);
+        if(i>=0){ d.alloc.splice(i,1); if(d.alloc.length){ const s=d.alloc.reduce((a,b)=>a+b.pct,0)||1; d.alloc.forEach(a=>a.pct=a.pct/s*100); roundAlloc(d.alloc);} }
+      });
+      save(); render();
+    });
+    ul.appendChild(li);
+  });
+}
+
+function esc(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* ---------- dragging the bar ---------- */
+let drag = null;
+$("bar").addEventListener("pointerdown", e=>{
+  const h = e.target.closest(".bar__handle");
+  if(!h) return;
+  // filter() copies the array but not the entries, so writing to .pct below still
+  // lands on the stored records — this must stay a shallow filter.
+  const alloc = getDay(selected, true).alloc.filter(a=>project(a.id));
+  const i = +h.dataset.i;
+  drag = {i, alloc, startX:e.clientX, w:$("bar").getBoundingClientRect().width,
+          a:alloc[i].pct, b:alloc[i+1].pct};
+  h.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+$("bar").addEventListener("pointermove", e=>{
+  if(!drag) return;
+  const delta = (e.clientX - drag.startX)/drag.w*100;
+  const sum = drag.a + drag.b;
+  const a = Math.max(0, Math.min(sum, drag.a + delta));
+  drag.alloc[drag.i].pct = a;
+  drag.alloc[drag.i+1].pct = sum - a;
+  paintDrag();
+});
+function endDrag(){
+  if(!drag) return;
+  roundAlloc(drag.alloc);
+  drag = null; save(); render();
+}
+$("bar").addEventListener("pointerup", endDrag);
+$("bar").addEventListener("pointercancel", endDrag);
+function paintDrag(){
+  const net = netMinutes(selected);
+  const segs = $("bar").querySelectorAll(".bar__seg");
+  const handles = $("bar").querySelectorAll(".bar__handle");
+  const rows = $("legend").children;
+  let cum = 0;
+  drag.alloc.forEach((a,i)=>{
+    if(segs[i]) segs[i].style.width = a.pct+"%";
+    cum += a.pct;
+    if(handles[i]) handles[i].style.left = cum+"%";
+    if(rows[i]){
+      rows[i].querySelector("input").value = Math.round(a.pct);
+      rows[i].querySelector(".hrs").textContent = dec(net*a.pct/100);
+    }
+  });
+}
+
+/* ---------- events ---------- */
+$("clockBtn").addEventListener("click", ()=>{
+  const k = key(new Date());
+  const d = getDay(k, true);
+  if(!d.in){ d.in = nowTime(); d.lunch = d.lunch ?? state.settings.lunchMinutes; }
+  else if(!d.out){ d.out = nowTime(); }
+  selected = k; anchor = new Date();
+  save(); render();
+});
+$("inT").addEventListener("change", e=>{ const d=getDay(selected,true); d.in = e.target.value||null; save(); render(); });
+$("outT").addEventListener("change", e=>{ const d=getDay(selected,true); d.out = e.target.value||null; save(); render(); });
+$("lunchT").addEventListener("change", e=>{
+  const d=getDay(selected,true); const v=parseInt(e.target.value,10);
+  d.lunch = isNaN(v)?0:Math.max(0,v); save(); render();
+});
+$("defLunch").addEventListener("change", e=>{
+  const v=parseInt(e.target.value,10);
+  state.settings.lunchMinutes = isNaN(v)?30:Math.max(0,v); save(); render();
+});
+$("jumpToday").addEventListener("click", ()=>{ selected = key(new Date()); anchor = new Date(); render(); });
+$("clearDay").addEventListener("click", ()=>{
+  if(!state.days[selected]) return;
+  if(!confirm("Clear "+selected+"?")) return;
+  delete state.days[selected]; save(); render(); toast("Day cleared");
+});
+$("prevW").addEventListener("click", ()=>{ anchor.setDate(anchor.getDate()-7); render(); });
+$("nextW").addEventListener("click", ()=>{ anchor.setDate(anchor.getDate()+7); render(); });
+
+$("pAdd").addEventListener("click", addProject);
+$("pName").addEventListener("keydown", e=>{ if(e.key==="Enter") addProject(); });
+$("pCode").addEventListener("keydown", e=>{ if(e.key==="Enter") addProject(); });
+function addProject(){
+  const name = $("pName").value.trim();
+  if(!name){ $("pName").focus(); return; }
+  state.projects.push({
+    id: "p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    name, code: $("pCode").value.trim(),
+    color: COLORS[state.projects.length % COLORS.length]
+  });
+  $("pName").value = ""; $("pCode").value = "";
+  save(); render(); $("pName").focus();
+}
+
+$("exportBtn").addEventListener("click", ()=>{
+  const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "timesheet-"+key(new Date())+".json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+});
+$("importBtn").addEventListener("click", ()=>$("importFile").click());
+$("importFile").addEventListener("change", e=>{
+  const file = e.target.files[0]; if(!file) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try{
+      const s = JSON.parse(r.result);
+      if(!s || typeof s!=="object" || !("days" in s)) throw new Error("not a timesheet file");
+      if(!confirm("Replace everything in this browser with the file's data?")) return;
+      state = {version:1, settings:Object.assign({lunchMinutes:30}, s.settings), projects:s.projects||[], days:s.days||{}};
+      save(); render(); toast("Data imported");
+    }catch(err){ toast("That file isn't a timesheet export."); }
+  };
+  r.onerror = () => toast("Could not read that file.");
+  r.readAsText(file);
+  e.target.value = "";
+});
+
+let toastT;
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove("show"), 2200);
+}
+
+/* keep a running day ticking, and re-check the date after the app sleeps */
+setInterval(()=>{ if(isRunning(selected)) { renderDay(); renderAlloc(); } }, 20000);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) render(); });
+
+render();
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>
