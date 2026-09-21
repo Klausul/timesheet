@@ -197,6 +197,54 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .weeksum .hrs{font-variant-numeric:tabular-nums}
 .weeksum .grand{display:flex;justify-content:space-between;padding-top:.6rem;font-weight:650}
 
+/* ---- week report ---- */
+.seg{
+  display:flex;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden;margin-bottom:.7rem;
+}
+.seg__btn{
+  flex:1 1 0;background:none;border:0;padding:.55rem;font-size:.9rem;color:var(--muted);
+  min-height:44px;-webkit-tap-highlight-color:transparent;
+}
+.seg__btn+.seg__btn{border-left:1px solid var(--line)}
+/* Matches how .day.is-selected marks the current row: paper against surface. */
+.seg__btn.is-on{background:var(--paper);color:var(--ink);font-weight:600}
+
+/* A seven-column week with long codes is wider than the 34rem column, so the
+   grid scrolls on its own rather than pushing the page sideways. */
+.gridwrap{
+  overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;
+  border:1px solid var(--line);border-radius:var(--r);background:var(--surface);
+}
+.grid{border-collapse:collapse;width:100%;font-size:.9rem}
+.grid th,.grid td{
+  padding:.5rem .55rem;text-align:right;white-space:nowrap;
+  font-variant-numeric:tabular-nums;border-bottom:1px solid var(--line);
+}
+.grid tbody tr:last-child th,.grid tbody tr:last-child td{border-bottom:0}
+.grid thead th{font-size:.78rem;font-weight:600;color:var(--muted);vertical-align:bottom}
+.grid thead th small{display:block;font-size:.72rem;font-weight:400}
+.grid .is-today{color:var(--ink);font-weight:650}
+.grid .is-weekend{background:var(--weekend)}
+/* The row label stays put while the day columns scroll under it. Sticky needs
+   the th to remain a table-cell, so the flex row is an inner span. */
+.grid .rowhead{
+  position:sticky;left:0;z-index:1;background:var(--surface);
+  text-align:left;font-weight:600;
+}
+.grid .rowhead .label{display:flex;align-items:center;gap:.5rem}
+/* The name is the long line now, so the width cap belongs on the label itself
+   rather than on the code beneath it. */
+.grid .rowhead .txt{min-width:0;max-width:9.5rem;overflow:hidden;text-overflow:ellipsis}
+.grid .rowhead .txt small{
+  display:block;font-size:.72rem;font-weight:400;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;
+}
+.grid .zero{color:var(--muted)}
+.grid tfoot th,.grid tfoot td{
+  font-weight:650;border-top:2px solid var(--line-strong);border-bottom:0;
+}
+
 /* ---- settings ---- */
 details{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:.75rem .9rem}
 summary{
@@ -300,10 +348,22 @@ details[open] summary{margin-bottom:.8rem}
       <div class="weeknav__label" id="weekLabel">Week<span>—</span></div>
       <button class="nav" id="nextW" aria-label="Next week">›</button>
     </div>
-    <ol class="days" id="days"></ol>
-    <div class="weeksum">
-      <ul id="weekProjects"></ul>
-      <div class="grand"><span>Week total</span><span id="weekTotal">0:00</span></div>
+    <div class="seg" role="tablist" aria-label="Week view">
+      <button class="seg__btn is-on" type="button" id="tabDays" role="tab" aria-selected="true" aria-controls="viewDays">Days</button>
+      <button class="seg__btn" type="button" id="tabReport" role="tab" aria-selected="false" aria-controls="viewReport">Report</button>
+    </div>
+
+    <div id="viewDays" role="tabpanel" aria-labelledby="tabDays">
+      <ol class="days" id="days"></ol>
+      <div class="weeksum">
+        <ul id="weekProjects"></ul>
+        <div class="grand"><span>Week total</span><span id="weekTotal">0:00</span></div>
+      </div>
+    </div>
+
+    <div id="viewReport" role="tabpanel" aria-labelledby="tabReport" hidden>
+      <div class="gridwrap"><table class="grid" id="reportGrid"></table></div>
+      <p class="empty" id="reportEmpty" hidden>Nothing logged this week.</p>
     </div>
   </section>
 
@@ -333,6 +393,7 @@ details[open] summary{margin-bottom:.8rem}
 <script>
 "use strict";
 const KEY = "timesheet.v1";
+const VIEWKEY = "timesheet.weekview";
 const COLORS = ["#3B82C4","#2FA58C","#C05E9B","#C96A2E","#7B6CD9","#5E9B3F","#C7494F","#7E8896"];
 const DAYNAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -343,6 +404,15 @@ let anchor = new Date();          // any date inside the shown week
 let selected = key(new Date());   // yyyy-mm-dd of the day being edited
 let chipsExpanded = false;        // is the full project list showing?
 let lastRenderedDay = null;       // collapses the list when the day changes
+// "days" or "report". Kept in its own key rather than in state: the import path
+// rebuilds state field by field, so a slot there would be wiped by any import.
+let weekView = loadView();
+function loadView(){
+  // Reading storage can throw outright in locked-down privacy modes, and this
+  // runs at module scope where that would take the whole script down.
+  try{ return localStorage.getItem(VIEWKEY) === "report" ? "report" : "days"; }
+  catch(e){ return "days"; }
+}
 
 function load(){
   try{
@@ -669,30 +739,48 @@ function renderWeek(){
   $("weekLabel").innerHTML = "Week "+isoWeek(days[0])+
     "<span>"+days[0].getDate()+" "+MONTHS[days[0].getMonth()]+" – "+days[6].getDate()+" "+MONTHS[days[6].getMonth()]+"</span>";
 
+  const report = weekView === "report";
+  $("tabDays").classList.toggle("is-on", !report);
+  $("tabReport").classList.toggle("is-on", report);
+  $("tabDays").setAttribute("aria-selected", report ? "false" : "true");
+  $("tabReport").setAttribute("aria-selected", report ? "true" : "false");
+  $("viewDays").hidden = report;
+  $("viewReport").hidden = !report;
+
   const list = $("days"); list.innerHTML = "";
   let weekTotal = 0;
   const byProject = new Map(); let unassigned = 0;
+  // The report reads the same numbers, laid out per day instead of summed:
+  // cells maps a project id to its seven daily minutes.
+  const cells = new Map();
+  const dayNet = [], unassignedByDay = [];
 
   days.forEach((date,i)=>{
     const k = key(date);
     const net = netMinutes(k);
     weekTotal += net;
+    dayNet[i] = net; unassignedByDay[i] = 0;
+
+    const alloc = getDay(k).alloc.filter(a=>project(a.id));
+    let segs = "";
+    if(net>0 && alloc.length){
+      alloc.forEach(a=>{
+        const min = net*a.pct/100;
+        segs += '<span style="width:'+a.pct+'%;background:'+project(a.id).color+'"></span>';
+        byProject.set(a.id, (byProject.get(a.id)||0) + min);
+        if(!cells.has(a.id)) cells.set(a.id, new Array(7).fill(0));
+        cells.get(a.id)[i] += min;
+      });
+    }else if(net>0){ unassigned += net; unassignedByDay[i] = net; }
+
+    // Only one panel is on screen, so skip building the rows behind the other.
+    if(report) return;
 
     const li = document.createElement("li");
     const btn = document.createElement("button");
     btn.className = "day" + (k===selected?" is-selected":"") + (k===today?" is-today":"") +
                     (i>=5?" is-weekend":"");
     btn.type = "button";
-
-    const alloc = getDay(k).alloc.filter(a=>project(a.id));
-    let segs = "";
-    if(net>0 && alloc.length){
-      alloc.forEach(a=>{
-        segs += '<span style="width:'+a.pct+'%;background:'+project(a.id).color+'"></span>';
-        byProject.set(a.id, (byProject.get(a.id)||0) + net*a.pct/100);
-      });
-    }else if(net>0){ unassigned += net; }
-
     btn.innerHTML =
       '<span class="dayname">'+DAYNAMES[i]+'<small>'+date.getDate()+" "+MONTHS[date.getMonth()]+'</small></span>'+
       '<span class="minibar">'+segs+'</span>'+
@@ -700,6 +788,8 @@ function renderWeek(){
     btn.addEventListener("click", ()=>{ selected = k; render(); });
     li.appendChild(btn); list.appendChild(li);
   });
+
+  if(report){ renderReport(days, cells, byProject, dayNet, unassignedByDay, weekTotal); return; }
 
   $("weekTotal").textContent = dec(weekTotal);
   const ul = $("weekProjects"); ul.innerHTML = "";
@@ -718,6 +808,61 @@ function renderWeek(){
       '<span class="name">Not split yet</span><span class="hrs">'+dec(unassigned)+'</span>';
     ul.appendChild(li);
   }
+}
+
+/* The matrix the work system wants: projects down the left, days across the top,
+   decimal hours in the cells. Read only — every figure here is derived from the
+   same alloc percentages the bar edits. */
+function renderReport(days, cells, byProject, dayNet, unassignedByDay, weekTotal){
+  const table = $("reportGrid");
+  const today = key(new Date());
+  // Ordered by the project list, not by hours: this grid is read line by line
+  // against a fixed spreadsheet, so rows must not reshuffle from week to week.
+  const rows = state.projects.filter(p=>byProject.has(p.id));
+  const hasUnassigned = unassignedByDay.some(m=>m>0);
+
+  $("reportEmpty").hidden = weekTotal > 0;
+  if(!(weekTotal > 0)){ table.innerHTML = ""; return; }
+
+  // Mon–Fri always; a weekend column only earns its width once it has time on it.
+  const cols = [0,1,2,3,4].concat(dayNet[5]>0?[5]:[]).concat(dayNet[6]>0?[6]:[]);
+
+  const cell = min => min > 0
+    ? '<td>'+dec(min)+'</td>'
+    : '<td class="zero">–</td>';
+  const headClass = i => (key(days[i])===today?" is-today":"") + (i>=5?" is-weekend":"");
+
+  let head = '<tr><th class="rowhead"></th>';
+  cols.forEach(i=>{
+    head += '<th scope="col" class="'+headClass(i).trim()+'">'+DAYNAMES[i]+
+            '<small>'+days[i].getDate()+" "+MONTHS[days[i].getMonth()]+'</small></th>';
+  });
+  head += '</tr>';
+
+  let body = "";
+  rows.forEach(p=>{
+    const mins = cells.get(p.id) || new Array(7).fill(0);
+    // The name is what you recognise a row by; the code sits under it as the
+    // value to type into the work system.
+    const label = p.code
+      ? esc(p.name)+'<small>'+esc(p.code)+'</small>'
+      : esc(p.name);
+    body += '<tr><th scope="row" class="rowhead"><span class="label">'+
+      '<span class="swatch" style="background:'+p.color+'"></span>'+
+      '<span class="txt">'+label+'</span></span></th>'+
+      cols.map(i=>cell(mins[i])).join("")+'</tr>';
+  });
+  if(hasUnassigned){
+    body += '<tr><th scope="row" class="rowhead"><span class="label">'+
+      '<span class="swatch" style="background:var(--empty)"></span>'+
+      '<span class="txt">Not split yet</span></span></th>'+
+      cols.map(i=>cell(unassignedByDay[i])).join("")+'</tr>';
+  }
+
+  let foot = '<tr><th scope="row" class="rowhead">Total</th>'+
+    cols.map(i=>cell(dayNet[i])).join("")+'</tr>';
+
+  table.innerHTML = "<thead>"+head+"</thead><tbody>"+body+"</tbody><tfoot>"+foot+"</tfoot>";
 }
 
 function renderProjects(){
@@ -874,6 +1019,13 @@ $("clearDay").addEventListener("click", ()=>{
   if(!confirm("Clear "+selected+"?")) return;
   delete state.days[selected]; save(); render(); toast("Day cleared");
 });
+function setWeekView(v){
+  weekView = v;
+  try{ localStorage.setItem(VIEWKEY, v); }catch(e){ /* preference only; not worth a toast */ }
+  render();
+}
+$("tabDays").addEventListener("click", ()=>setWeekView("days"));
+$("tabReport").addEventListener("click", ()=>setWeekView("report"));
 $("prevW").addEventListener("click", ()=>{ anchor.setDate(anchor.getDate()-7); render(); });
 $("nextW").addEventListener("click", ()=>{ anchor.setDate(anchor.getDate()+7); render(); });
 
@@ -925,7 +1077,12 @@ function toast(msg){
 }
 
 /* keep a running day ticking, and re-check the date after the app sleeps */
-setInterval(()=>{ if(isRunning(selected)) { renderDay(); renderAlloc(); } }, 20000);
+setInterval(()=>{
+  if(!isRunning(key(new Date()))) return;
+  if(isRunning(selected)){ renderDay(); renderAlloc(); }
+  // The report shows today's running hours as cells, so it has to tick too.
+  if(weekView === "report") renderWeek();
+}, 20000);
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) render(); });
 
 render();
