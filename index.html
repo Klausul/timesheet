@@ -236,10 +236,17 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 /* The name is the long line now, so the width cap belongs on the label itself
    rather than on the code beneath it. */
 .grid .rowhead .txt{min-width:0;max-width:9.5rem;overflow:hidden;text-overflow:ellipsis}
+/* The code is here to be copied into the work system, so it opts back out of
+   the page-wide user-select:none. */
 .grid .rowhead .txt small{
   display:block;font-size:.72rem;font-weight:400;color:var(--muted);
   overflow:hidden;text-overflow:ellipsis;
+  user-select:text;-webkit-user-select:text;
 }
+/* Codes are hidden by default so a week fits without sideways scrolling; this
+   brings them all back at once, for the one task that needs them. */
+.codetog{margin-bottom:.6rem}
+.codetog[aria-pressed=true]{background:var(--surface);font-weight:600}
 .grid .zero{color:var(--muted)}
 .grid tfoot th,.grid tfoot td{
   font-weight:650;border-top:2px solid var(--line-strong);border-bottom:0;
@@ -285,9 +292,10 @@ details[open] summary{margin-bottom:.8rem}
 .cpick button[aria-checked=true] .dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.14),0 0 0 2px var(--surface),0 0 0 4px var(--line-strong)}
 .plist input{font:inherit;background:none;border:0;color:inherit;padding:.5rem 0;min-width:0;min-height:44px}
 .plist .pname{flex:1}
-/* The swatch button takes real width now, so the code column gives some back;
-   codes are short and the name is what needs the room. */
-.plist .pcode{width:5.5em;flex:none;text-align:right;color:var(--muted)}
+/* Real codes run to about ten characters, so the column is sized to show one
+   whole rather than scrolling inside the field; the name gives the room back
+   because it ellipsises and a half-read code does not. */
+.plist .pcode{width:8.5em;flex:none;text-align:right;color:var(--muted)}
 .plist .rm{
   background:none;border:0;color:var(--muted);font-size:1.15rem;
   flex:none;width:44px;height:44px;margin:-.5rem -.6rem -.5rem 0;
@@ -298,7 +306,7 @@ details[open] summary{margin-bottom:.8rem}
   padding:.6rem;color:inherit;min-width:0;min-height:44px;
 }
 .addrow input:first-child{flex:1 1 9rem}
-.addrow input:nth-child(2){flex:1 1 6em;width:auto;max-width:9.5em}
+.addrow input:nth-child(2){flex:1 1 8.5em;width:auto;max-width:11em}
 .btn{
   background:var(--paper);border:1px solid var(--line-strong);border-radius:8px;
   padding:.6rem 1rem;font-size:.9rem;min-height:44px;-webkit-tap-highlight-color:transparent;
@@ -362,6 +370,7 @@ details[open] summary{margin-bottom:.8rem}
     </div>
 
     <div id="viewReport" role="tabpanel" aria-labelledby="tabReport" hidden>
+      <button class="btn codetog" type="button" id="toggleCodes" aria-pressed="false">Show codes</button>
       <div class="gridwrap"><table class="grid" id="reportGrid"></table></div>
       <p class="empty" id="reportEmpty" hidden>Nothing logged this week.</p>
     </div>
@@ -394,6 +403,7 @@ details[open] summary{margin-bottom:.8rem}
 "use strict";
 const KEY = "timesheet.v1";
 const VIEWKEY = "timesheet.weekview";
+const CODEKEY = "timesheet.showcodes";
 const COLORS = ["#3B82C4","#2FA58C","#C05E9B","#C96A2E","#7B6CD9","#5E9B3F","#C7494F","#7E8896"];
 const DAYNAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -412,6 +422,12 @@ function loadView(){
   // runs at module scope where that would take the whole script down.
   try{ return localStorage.getItem(VIEWKEY) === "report" ? "report" : "days"; }
   catch(e){ return "days"; }
+}
+// Same reasoning as weekView: a display preference, not timesheet data.
+let showCodes = loadShowCodes();
+function loadShowCodes(){
+  try{ return localStorage.getItem(CODEKEY) === "1"; }
+  catch(e){ return false; }
 }
 
 function load(){
@@ -821,6 +837,14 @@ function renderReport(days, cells, byProject, dayNet, unassignedByDay, weekTotal
   const rows = state.projects.filter(p=>byProject.has(p.id));
   const hasUnassigned = unassignedByDay.some(m=>m>0);
 
+  // Set before the early return below, so the button never keeps a stale label
+  // from the last week that had hours on it.
+  const tog = $("toggleCodes");
+  tog.textContent = showCodes ? "Hide codes" : "Show codes";
+  tog.setAttribute("aria-pressed", showCodes ? "true" : "false");
+  // Nothing logged means no rows and so no codes to reveal.
+  tog.hidden = !(weekTotal > 0) || !rows.some(p=>p.code);
+
   $("reportEmpty").hidden = weekTotal > 0;
   if(!(weekTotal > 0)){ table.innerHTML = ""; return; }
 
@@ -843,8 +867,8 @@ function renderReport(days, cells, byProject, dayNet, unassignedByDay, weekTotal
   rows.forEach(p=>{
     const mins = cells.get(p.id) || new Array(7).fill(0);
     // The name is what you recognise a row by; the code sits under it as the
-    // value to type into the work system.
-    const label = p.code
+    // value to type into the work system, once "Show codes" asks for it.
+    const label = (p.code && showCodes)
       ? esc(p.name)+'<small>'+esc(p.code)+'</small>'
       : esc(p.name);
     body += '<tr><th scope="row" class="rowhead"><span class="label">'+
@@ -1024,6 +1048,12 @@ function setWeekView(v){
   try{ localStorage.setItem(VIEWKEY, v); }catch(e){ /* preference only; not worth a toast */ }
   render();
 }
+function setShowCodes(v){
+  showCodes = v;
+  try{ localStorage.setItem(CODEKEY, v ? "1" : "0"); }catch(e){ /* preference only; not worth a toast */ }
+  render();
+}
+$("toggleCodes").addEventListener("click", ()=>setShowCodes(!showCodes));
 $("tabDays").addEventListener("click", ()=>setWeekView("days"));
 $("tabReport").addEventListener("click", ()=>setWeekView("report"));
 $("prevW").addEventListener("click", ()=>{ anchor.setDate(anchor.getDate()-7); render(); });
